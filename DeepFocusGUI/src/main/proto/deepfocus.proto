@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package DeepFocusGUI;
+
+option java_multiple_files = true;
+option java_package = "ch.idiap.cbi";
+option java_outer_classname = "DeepFocusGUIProto";
+
+service DeepFocus {
+rpc CreateCalibrationCurve (CalibrationRequest) returns (CalibrationCurve) {}
+rpc StartAutofocus (BestFocusRequest) returns (BestFocusResponse) {}
+rpc LoadCalibration (CurveRequest) returns (CurveResponse) {}
+}
+
+message CalibrationRequest {
+bytes image_list = 1;
+int32 bytes_per_pixel = 2;
+int32 width = 3;
+int32 height = 4;
+int32 steps = 5;
+repeated double z_positions = 6;
+string calib_curve_pathway = 7;
+}
+
+message CalibrationCurve {
+string calib_curve_image_file_path = 1;
+double gaussian2_center = 2;
+double peak_center = 3;
+double gaussian2_sigma = 4;
+double peak_sigma = 5;
+double constant_c = 6;
+}
+
+message BestFocusRequest {
+bytes image_list = 1;
+int32 bytes_per_pixel = 2;
+int32 width = 3;
+int32 height = 4;
+double z_position = 5;
+repeated int32 roi_coords = 6;
+double min_limit = 7;
+double max_limit = 8;
+int32 min_iter =9;
+int32 max_iter = 10;
+double threshold = 11;
+double roi_3d_num_sigma = 12;
+string optimizer = 13;
+int32 steps = 14;
+}
+
+message BestFocusResponse {
+int32 message = 1;
+double z_shift = 2;
+double roi_min_z = 3;
+double roi_max_z = 4;
+}
+
+message CurveRequest {
+string calibration_curve_pickle_path = 1;
+}
+
+message CurveResponse {
+bool pickle_found = 1;
+}
