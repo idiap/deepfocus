@@ -146,7 +146,7 @@ def test_unet(learn, picture_input, downsample=8, batch_size=12, picture=False):
 def get_learner():
 
     device = torch.device('cuda')
-    learn = load_learner(path='/home/adrian/git/Pytorch-UNet/', file='data/05-03-2020-17:37:43_PROJ_9011_LR_0.0001_BS_30_N_unet_resnet_ATT_False_MODEL_resnet34unetanneal_EXPORT_37.pth', device=device)
+    learn = load_learner(path='', file='data/05-03-2020-17:37:43_PROJ_9011_LR_0.0001_BS_30_N_unet_resnet_ATT_False_MODEL_resnet34unetanneal_EXPORT_37.pth', device=device)
 
     return learn
 
