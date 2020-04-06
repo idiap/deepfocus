@@ -418,6 +418,9 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
     :param center_method:
     :return:
         '''
+    if len(focus_map_4d.shape) == 3:
+        focus_map_4d = focus_map_4d[:,:,:,np.newaxis]
+
     focus_map_4d = focus_map_4d.reshape(focus_map_4d.shape[0], focus_map_4d.shape[1]*focus_map_4d.shape[2], focus_map_4d.shape[3])
     log.info('Focus map 4D shape :{}'.format(focus_map_4d.shape))
     ## REMOVE OUTLIERS
