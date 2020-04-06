@@ -59,6 +59,17 @@ from skimage.morphology import square
 from skimage.transform import resize
 from unet_detector import *
 from sklearn.cluster import MeanShift
+import logging
+
+logging.basicConfig(
+    format="%(asctime)s [FIT] %(message)s".format(00),
+    handlers=[
+        logging.FileHandler("output_log_{}.log".format(00)),
+        logging.StreamHandler()
+    ])
+
+log = logging.getLogger('')
+log.setLevel(logging.INFO)
 
 learn = get_learner()
 
@@ -119,12 +130,12 @@ class ImageStack:
     def add_image_to_stack(self, image, z_position, update_focus_map=True):
         self.image_stack = np.concatenate((self.image_stack, image), axis=0)
         self.z_positions = np.concatenate((self.z_positions, [z_position]), axis=0)
-        print('z positions shape {} (last z = {})'.format(self.z_positions.shape, self.z_positions[-1]))
+        log.info('z positions shape {} (last z = {})'.format(self.z_positions.shape, self.z_positions[-1]))
 
         if update_focus_map:
-            print('Set focus map from new image ...')
+            log.info('Set focus map from new image ...')
             focus_map = get_focus_map_from_stack(image, downsample=self.downsample, num_iterations=1, gain_sigma=0)
-            print('Format = {} Score mean of all map = {}'.format( focus_map.shape, focus_map.mean()))
+            log.info('Format = {} Score mean of all map = {}'.format( focus_map.shape, focus_map.mean()))
             self.focus_map = np.concatenate((self.focus_map, focus_map), axis=0)
 
 
@@ -133,9 +144,9 @@ class ImageStack:
         self.width = width
         self.height = height
         self.z_positions = np.atleast_1d(np.asarray(z_positions))
-        print('z position shape {}'.format(self.z_positions.shape))
+        log.info('z position shape {}'.format(self.z_positions.shape))
         self.downsample = downsample
-        print('Set focus map from stack ({} images)...'.format(self.get_num_z()))
+        log.info('Set focus map from stack ({} images)...'.format(self.get_num_z()))
         self.focus_map = get_focus_map_from_stack(self.image_stack, downsample=downsample, num_iterations=1, gain_sigma=0)
 
         
@@ -324,7 +335,7 @@ def get_synthetic_image(flip = False):
 def blur_image_stack(image, num_z, min_z_calib = None, max_z_calib = None, z_focus=0, noise_sigma=0.0, input_noise = 0.0, width_coeff = 1.0):
     im_size = image.shape[0]
     #kernels = np.zeros((im_size, num_z, num_z))
-    print('Generating a blurred stack from {} to {} with {} images and centered at z={}.'.format(min_z_calib, max_z_calib, num_z, z_focus))
+    log.info('Generating a blurred stack from {} to {} with {} images and centered at z={}.'.format(min_z_calib, max_z_calib, num_z, z_focus))
     kernels = []
     z_coeff = 1.7*width_coeff
     noise = np.random.normal(0, noise_sigma, num_z)
@@ -408,7 +419,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
     :return:
         '''
     focus_map_4d = focus_map_4d.reshape(focus_map_4d.shape[0], focus_map_4d.shape[1]*focus_map_4d.shape[2], focus_map_4d.shape[3])
-    print('Focus map 4D shape :{}'.format(focus_map_4d.shape))
+    log.info('Focus map 4D shape :{}'.format(focus_map_4d.shape))
     ## REMOVE OUTLIERS
     std = focus_map_4d.std(axis=1)
     mean = focus_map_4d.mean(axis=1)
@@ -424,7 +435,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
     # We average over the features
     data = focus_map_2d.mean(axis=1)
     #std_deviation = np.std(focus_map_3d, axis=(1)).mean(axis=1)
-    print('Data shape: {}'.format(data.shape))
+    log.info('Data shape: {}'.format(data.shape))
     #inter_func = interp1d(z_calibration, data, kind='linear', bounds_error=False, fill_value=(data[0],data[-1]))
     
     calibration = Calibration()
@@ -443,7 +454,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
             weights /= np.clip(scale(std_deviation), 0.01, 1.0)
         weights = scale(weights)
         #weights = np.ones(data.shape[0])
-        print('Center started at {}'.format(start_center))
+        log.info('Center started at {}'.format(start_center))
         params = model.make_params(constant_intercept=data.max(), constant_slope = 0.0, weights = weights,
                                    peak_center=start_center,
                                    peak_sigma=(max_z-min_z)/5.0,
@@ -451,7 +462,8 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
                                    gaussian2_sigma=(max_z-min_z),
                                    gaussian2_amplitude = 0.0, gaussian2_center = start_center)
 
-        print('min z : {}, max z = {}'.format(min_z, max_z))
+        log.info\
+            ('min z : {}, max z = {}'.format(min_z, max_z))
         params['peak_center'].min = min_z
         params['peak_center'].max = max_z
         params['peak_amplitude'].max = 0.0#(data.min()-data.max())
@@ -473,7 +485,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
         #mi = lmfit.minimize(model, params, method='Nelder', reduce_fcn='neglogcauchy')
 
         result = model.fit(data, params, x=z_calibration,  method='nelder')
-        print(result.fit_report())
+        log.info(result.fit_report())
         sigma_1 = result.params['peak_amplitude'].value
         sigma_2 = result.params['gaussian2_amplitude'].value
         calibration.params = result.params
@@ -489,7 +501,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
             calibration.peak_amplitude = result.params['peak_amplitude'].value
             calibration.gaussian2_amplitude =  result.params['gaussian2_amplitude'].value
         else:
-            print('Gaussian 2 is chosen as the peak !!')
+            log.info('Gaussian 2 is chosen as the peak !!')
             exit()
             calibration.peak_center = result.params['gaussian2_center'].value
             calibration.gaussian2_center =  result.params['peak_center'].value
@@ -500,7 +512,7 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
 
         calibration.c = result.params['constant_intercept'].value
 
-        print('Found mu = {}, sigma = {}, c = {}, width= {}'.format(calibration.peak_center, calibration.peak_sigma, calibration.c, calibration.get_width()))
+        log.info('Found mu = {}, sigma = {}, c = {}, width= {}'.format(calibration.peak_center, calibration.peak_sigma, calibration.c, calibration.get_width()))
 
     elif center_method == 'polynomial':
         yp = np.linspace(min_z, max_z, z_size_high)
@@ -517,9 +529,10 @@ def create_calibration_curve(focus_map_4d, min_z, max_z, z_calibration, z_size_h
     plt.plot(z_calibration, weights)
     plt.plot(yp, calibration.eval(yp-calibration.peak_center))
     plt.legend(['original calibration curve', 'gaussian fitted curve', 'weights', 'calibration'])
-    print('Calibration curve shifted by {}'.format(calibration.peak_center))
+    log.info('Calibration curve shifted by {}'.format(calibration.peak_center))
     #plt.show()
     return calibration
+
 
 def detect_4d_acquisition_synthetic(image, min_z, max_z, num_z, noise_sigma, num_iterations, gain_sigma, best_focus=-20):
     '''
@@ -531,7 +544,7 @@ def detect_4d_acquisition_synthetic(image, min_z, max_z, num_z, noise_sigma, num
     for z in rand_z:
         blurred,_ = blur_image_stack(image, 1, min_z_calib=z, max_z_calib=z, z_focus=best_focus)
         focus = get_focus_map_from_stack(blurred, num_iterations=num_iterations, gain_sigma=gain_sigma)[0]
-        print('Z generated : {} , focus found {} '.format(z, focus))
+        log.info('Z generated : {} , focus found {} '.format(z, focus))
         focus_map.append(focus)
 
     focus_map = np.asarray(focus_map)
@@ -539,6 +552,7 @@ def detect_4d_acquisition_synthetic(image, min_z, max_z, num_z, noise_sigma, num
     noise = noise.reshape(focus_map.shape)
     focus_map += noise
     return np.asarray(focus_map) + noise, rand_z
+
 
 def plot_focus_acquisition(calibration_curve, two_z, two_aqu, best_shift, values_shift):
     plt.figure()
@@ -556,6 +570,7 @@ def plot_focus_acquisition(calibration_curve, two_z, two_aqu, best_shift, values
     plt.ylabel('Focus unit')
     plt.title('Acquisition and fit')
 
+
 def find_nearest(array, value):
     '''
     FIND NEAREST ARRAY INDEX FROM A VALUE
@@ -567,7 +582,9 @@ def find_nearest(array, value):
 
 @jit(nopython=True, cache=True)
 def correlate_all_points(x_max, y_max, calib, two_acqu_p, two_acqu_p_clipped, shift_idx, correlated):
-
+    '''
+    Todo: use signal processing methods (i.e. convolution) to make this correlation happening.
+    '''
     for x in range(x_max):
         for y in range(y_max):
             weights = two_acqu_p_clipped[x, y]  # / (1 + two_acqu_p[x, y])
@@ -575,10 +592,9 @@ def correlate_all_points(x_max, y_max, calib, two_acqu_p, two_acqu_p_clipped, sh
             distance_to_sum = distance_matrix * weights
             distance = np.mean(distance_to_sum)
             correlated[shift_idx, x, y] = distance
-
-
     return correlated
-          
+
+
 def fit_to_calibration_correlation(search_min_x, search_max_x, points_to_correlate_value, points_to_correlate_z, calibration_curve_y, z_size_correlation = None):
     '''
     USING THE CALIBRATION CURVE, SLIDE IT AND MEASURE DISTANCE (CORRELATION)
@@ -604,7 +620,7 @@ def fit_to_calibration_correlation(search_min_x, search_max_x, points_to_correla
 
     ## CORRELATE
     correlated = np.zeros((yp.shape[0], points_to_correlate_value.shape[1], points_to_correlate_value.shape[2]))
-    print('start correlation')
+    log.info('start correlation')
     calib = []
 
     for shift_idx, shift in enumerate(yp):
@@ -650,55 +666,58 @@ def get_best_focus_from_image_stack(image_stack, calibration_curve, research_bou
     
     ################################## START OF DETECTION PART ###########################################
     ################ CORRELATE WITH THE CALIBRATION CURVE AND DRAW THE CORRLELATION CURVE ################
-    print('Correlate...')
+    log.info('Correlate...')
 
     correlation_results, py = fit_to_calibration_correlation(research_boundaries[0], research_boundaries[1], image_stack.get_focus_map(), image_stack.get_z_positions(), calibration_curve, z_size_correlation=z_size_correlation)
     ######################### GET THE MOST CORRELATED POINT AND SET THE SHIFT ############################
     minimum_arg = np.argmin(correlation_results,axis=0)
     #bornes_moyenne = np.asarray(research_boundaries).mean()
     final_best_values = py[minimum_arg]
-    print('Minimums for px 0,0 {}, px -1,-1 {}'.format(final_best_values[0,0], final_best_values[-1,-1]))
+    log.info('Minimums for px 0,0 {}, px -1,-1 {}'.format(final_best_values[0,0], final_best_values[-1,-1]))
     ##################################### END OF DETECTION PART ##########################################
     return final_best_values, correlation_results, py
 
 
-def find_GSS_Fibonacci_points(xL, xR):
-    print('xL: {}'.format(xL))
-    print('xR: {}'.format(xR))
+def get_gss_points(xL, xR):
+    log.info('xL: {}'.format(xL))
+    log.info('xR: {}'.format(xR))
 
     delta = (golden_ratio - 1) * (xR - xL)
     a = xR - delta
-    print('a: {}'.format(a))
+    log.info('a: {}'.format(a))
     b = xL + delta
-    print('b: {}'.format(b))
+    log.info('b: {}'.format(b))
     return a, b
 
 
-
-def GSS_Fibonacci(gss_fibonacci_stack):
+def golden_ratio_search_step(gss_data_stack):
     # GSS
-    if gss_fibonacci_stack[-4]:
-        d_xL_xR = (gss_fibonacci_stack[1] - gss_fibonacci_stack[0]) / (2 * golden_ratio - 3) * (golden_ratio - 1)
+    if gss_data_stack[-4]:
+        d_xL_xR = (gss_data_stack[1] - gss_data_stack[0]) / (2 * golden_ratio - 3) * (golden_ratio - 1)
 
-    if gss_fibonacci_stack[3] < gss_fibonacci_stack[2]:
-        gss_fibonacci_stack[2] = gss_fibonacci_stack[3]
-        gss_fibonacci_stack[0], gss_fibonacci_stack[1] = find_GSS_Fibonacci_points(gss_fibonacci_stack[0],
-                                                                                   gss_fibonacci_stack[0] + d_xL_xR)
-        gss_fibonacci_stack[4] = 1.
+    if gss_data_stack[3] < gss_data_stack[2]:
+        gss_data_stack[2] = gss_data_stack[3]
+        gss_data_stack[0], gss_data_stack[1] = get_gss_points(gss_data_stack[0],
+                                                              gss_data_stack[0] + d_xL_xR)
+        gss_data_stack[4] = 1.
     else:
-        xL = gss_fibonacci_stack[1]
-        gss_fibonacci_stack[3] = gss_fibonacci_stack[2]
-        gss_fibonacci_stack[0], gss_fibonacci_stack[1] = find_GSS_Fibonacci_points(gss_fibonacci_stack[1] - d_xL_xR,
-                                                                                   gss_fibonacci_stack[1])
-        gss_fibonacci_stack[4] = 0.
+        xL = gss_data_stack[1]
+        gss_data_stack[3] = gss_data_stack[2]
+        gss_data_stack[0], gss_data_stack[1] = get_gss_points(gss_data_stack[1] - d_xL_xR,
+                                                              gss_data_stack[1])
+        gss_data_stack[4] = 0.
 
-    return gss_fibonacci_stack
+    return gss_data_stack
 
 
 def get_focus_mean(focus_map):
     return focus_map.min()
 
 def synth_data():
+    '''
+    Generate synthetic data (triangle wave) and correlate
+    Unused
+    '''
     # Generate triangle curve
     search_min_x = 500
     search_max_x = 1100
@@ -770,7 +789,12 @@ def synth_data():
 
     plt.show()
 
+
 def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition = 6):
+    '''
+    Comparison between different scoring function and simulation of autofocus.
+    '''
+
     ################################ BOUNDARIES AND PARAMETERS ###########################################
     num_calibration_acquisitions = 1 # number of times the calibration curve is computer with a bit of random error
     num_iterations = 1 # number of detections with different random light
@@ -791,11 +815,11 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
     ################################## CREATE A STACK OF BLURRY IMAGES ###################################
     real_focus = rand_int(bornes_research[0]+150, bornes_research[1]-150)
     calibration_focus = rand_int(bornes_calibration[0]+80, bornes_calibration[1]-80)
-    print('Aquisition focus : {}. Calibration focus : {}'.format(real_focus, calibration_focus))
-    print('The real best shift point is {}'.format(real_focus-calibration_focus))
+    log.info('Aquisition focus : {}. Calibration focus : {}'.format(real_focus, calibration_focus))
+    log.info('The real best shift point is {}'.format(real_focus-calibration_focus))
 
     # GET SYNTHETIC BLURRED IMAGES
-    print('Get image stack...')
+    log.info('Get image stack...')
     image = get_synthetic_image()
     stack, z_calibration = blur_image_stack(image, num_z_points_calibration, min_z_calib=bornes_calibration[0], max_z_calib = bornes_calibration[1], z_focus=calibration_focus, noise_sigma=0.2, width_coeff=0.9)
     
@@ -803,10 +827,10 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
     ##################### DETECT THE FOCUS MAP FOR THE CALIBRATION CURVE #################################
     # GET A FEW FOCUS MAPS WITH DIFFERENT GAINS
     if method is 'cnn':
-        print('Get focus maps with {} different gains...'.format(num_calibration_acquisitions))
+        log.info('Get focus maps with {} different gains...'.format(num_calibration_acquisitions))
         focus_maps = []
         for i in range(num_calibration_acquisitions):
-            print('Calibration ...')
+            log.info('Calibration ...')
             rn = np.random.normal(0,gain_sigma,1)
             focus_map = get_focus_map_from_stack(stack+rn, num_iterations=1, gain_sigma=0, downsample=downsample)
             focus_maps.append(focus_map)
@@ -828,7 +852,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
         #plt.ylabel('Focus unit')
         #plt.title('Calibration curve for 2 pixels')
         ##################### SHIFT AND CREATE INTERPOLATED CALIBRATION CURVE FUNCTION #########################
-        print('Create calibration curve...')
+        log.info('Create calibration curve...')
         focus_map_mean = focus_map_mean[:,:,:,np.newaxis]
         std = focus_map_std.mean(axis=1).mean(axis=1)
         calibration_curve_real = create_calibration_curve(focus_map_mean, bornes_research[0], bornes_research[1], z_calibration, z_size_high, std_deviation = std)
@@ -839,7 +863,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
          #plt.show()
 
         ################### GET A FEW POINTS FOR ACQUISITION WITHIN THE RESEARCH BOUNDARIES ####################
-        print('Get {} acquisitions points...'.format(min_points_acquisition))
+        log.info('Get {} acquisitions points...'.format(min_points_acquisition))
         image = get_synthetic_image(flip=True)
         image_stack = None
         current_z = random.choice([real_focus-20, real_focus+20])[0]
@@ -858,7 +882,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
             #plt.show()
 
             ################ CORRELATE WITH THE CALIBRATION CURVE AND DRAW THE CORRLELATION CURVE ##################
-            print('Correlate...')
+            log.info('Correlate...')
             correlated, ypp = fit_to_calibration_correlation(bornes_research[0], bornes_research[1], image_stack.get_focus_map(), image_stack.get_z_positions(),
                                             calibration_curve_real, z_size_correlation=z_size_high)
 
@@ -867,7 +891,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
             minimum_arg = np.argmin(correlated,axis=0)
             final_best_values = ypp[minimum_arg]
 
-            print('Minimums for px 0,0 {}, px -1,-1 {}'.format(final_best_values[0,0], final_best_values[-1,-1]))
+            log.info('Minimums for px 0,0 {}, px -1,-1 {}'.format(final_best_values[0,0], final_best_values[-1,-1]))
 
             #plot_correlation(ypp, correlated, minimum_arg, minimums)
             #plot_focus_acquisition(calibration_curve_real, image_stack.get_z_positions(), image_stack.get_focus_map(), real_focus, final_best_values.mean())
@@ -879,7 +903,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
                 init_half_range = range_param * calibration_curve_real.get_width()
                 xL, xR = image_stack.get_min_z() - init_half_range, image_stack.get_min_z() + init_half_range
                 optimizer_data = [0, 0, 0, 0, 0, False, True, 0, 0, 0]
-                optimizer_data[0], optimizer_data[1] = find_GSS_Fibonacci_points(xL=xL, xR=xR)
+                optimizer_data[0], optimizer_data[1] = get_gss_points(xL=xL, xR=xR)
                 new_point = optimizer_data[0]
             elif image_stack.get_num_z() == 2:
                 optimizer_data[2] = get_focus_mean(image_stack.get_focus_map()[-1])
@@ -897,7 +921,7 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
                         optimizer_data[2] = focus_mean
 
                 if not (optimizer_data[-2] == optimizer_data[-1] - 1):
-                    optimizer_data = GSS_Fibonacci(optimizer_data)
+                    optimizer_data = golden_ratio_search_step(optimizer_data)
 
                 if optimizer_data[4] == 1:
                     new_point = optimizer_data[1]
@@ -905,12 +929,12 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
                     new_point = optimizer_data[0]
 
                 if ((optimizer_data[1] - optimizer_data[0]) / (2 * golden_ratio - 3) < criterion):
-                    print('Criterion Satisfied => Best Focus Point Found')
+                    log.info('Criterion Satisfied => Best Focus Point Found')
                     new_point = (optimizer_data[0] + optimizer_data[1]) / 2
                     optimizer_data[5] = True
 
                 elif image_stack.get_num_z() >= min_points_acquisition and not optimizer_data[5]:
-                    print('Criterion not Satisfied but too many images yet. Convexity tests...')
+                    log.info('Criterion not Satisfied but too many images yet. Convexity tests...')
                     score = 0.0
                     i = 0
                     for _x in range(image_stack.get_focus_map().shape[1]):
@@ -928,16 +952,16 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
                     plt.plot(ypp, model_poly.predict(PolynomialFeatures(degree=2, include_bias=True).fit_transform(ypp.reshape((-1, 1)))))
                     plt.plot(ypp, model_lin.predict(PolynomialFeatures(degree=1, include_bias=True).fit_transform(ypp.reshape((-1, 1)))))
                     score /= i
-                    print('Final score = {}'.format(score))
+                    log.info('Final score = {}'.format(score))
                     if score > 0:
-                        print('convex function found')
+                        log.info('convex function found')
                         optimizer_data[5] = True
                         message = 2
                     elif image_stack.get_num_z() <= max_points_acquisition:
-                        print('not convex function found, add one point')
+                        log.info('not convex function found, add one point')
                         min_points_acquisition += 1
                     else:
-                        print('not convex function found, but too many images')
+                        log.info('not convex function found, but too many images')
                         optimizer_data[5] = True
                         message = 2
 
@@ -950,32 +974,32 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
 
                 new_point = np.clip(new_point, absolute_z_limit_min, absolute_z_limit_max)
             else:
-                print("Comparing focus values")
+                log.info("Comparing focus values")
                 best_focus = get_focus_mean(image_stack.get_focus_map()[0])
                 best_focus_idx = 0
-                print("Index: ", best_focus_idx)
-                print("Focus: {}".format(best_focus))
+                log.info("Index: ", best_focus_idx)
+                log.info("Focus: {}".format(best_focus))
                 for i, focus_map in enumerate(image_stack.get_focus_map()[1::]):
                     temp = get_focus_mean(focus_map)
-                    print("Index: ", i + 1)
-                    print("Focus: {}".format(temp))
+                    log.info("Index: ", i + 1)
+                    log.info("Focus: {}".format(temp))
                     if temp < best_focus:
                         best_focus = temp
                         best_focus_idx = i + 1
-                        print("Current Best")
-                        print("Index: ", best_focus_idx)
-                        print("Focus: {}".format(best_focus))
+                        log.info("Current Best")
+                        log.info("Index: ", best_focus_idx)
+                        log.info("Focus: {}".format(best_focus))
 
                 #new_point = image_stack.get_z_positions()[best_focus_idx]
                 message = 2
             current_z = new_point#np.random.normal(image_stack.get_z_positions()[np.argmin(image_stack.get_focus_map().mean(axis=(1,2,3)))],calibration_curve_real.peak_sigma / 5.0)
             current_z = float(np.round(current_z*4.0))/4.0
 
-            print('Current points {}'.format(image_stack.get_z_positions()))
+            log.info('Current points {}'.format(image_stack.get_z_positions()))
     else:
         # brent method for other
         ################### GET A FEW POINTS FOR ACQUISITION WITHIN THE RESEARCH BOUNDARIES ####################
-        print('Get {} acquisitions points...'.format(min_points_acquisition))
+        log.info('Get {} acquisitions points...'.format(min_points_acquisition))
         image = get_synthetic_image(flip=True)
 
         image_stack = None
@@ -991,14 +1015,14 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
             else:
                 image_stack.add_image_to_stack(blurred, current_z, update_focus_map=False)
             score = 1/get_hpf_image(image_stack.image_stack[-1],size=128, method = method).mean()
-            print('score for z={}  is {}'.format(current_z, score))
+            log.info('score for z={}  is {}'.format(current_z, score))
             return score
 
         result = optimize.minimize_scalar(f, method='bounded', bounds = bornes_research, options= {'maxiter':max_points_acquisition})
         final_best_values = result.x
-        print('Found : {}'.format(result.x))
+        log.info('Found : {}'.format(result.x))
 
-    print('Current points {}'.format(image_stack.get_z_positions()))
+    log.info('Current points {}'.format(image_stack.get_z_positions()))
     #plot_final_best_values(final_best_values)
     #plt.figure()
     #plt.imshow(image)
@@ -1007,10 +1031,10 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
     #image_stack.print_focus_map()
     if not np.isscalar(final_best_values):
         final_best_values = final_best_values[(final_best_values > bornes_research[0]) & (final_best_values < bornes_research[1])]
-        print('Best values {}'.format(final_best_values))
+        log.info('Best values {}'.format(final_best_values))
         clustering = MeanShift(bandwidth=calibration_curve_real.get_width())
         clustering.fit(final_best_values.reshape(-1,1))
-        print('Centers available : {}'.format(clustering.cluster_centers_))
+        log.info('Centers available : {}'.format(clustering.cluster_centers_))
         center = clustering.cluster_centers_[np.argmax(np.bincount(clustering.labels_))]
         #stds = []
         #for i in range(len(clustering.cluster_centers_)):
@@ -1021,12 +1045,13 @@ def synth_image(method='cnn', min_points_acquisition = 3, max_points_acquisition
     else:
         center = final_best_values
 
-    print('Found value = {}, Real value = {}'.format(center, real_focus))
+    log.info('Found value = {}, Real value = {}'.format(center, real_focus))
     error = (np.abs(real_focus-center)).mean()
-    print('Error : {}'.format(error))
+    log.info('Error : {}'.format(error))
     ##################################### END OF DETECTION PART #############################################
     #plt.show(block=True)
     return error
+
 
 if __name__ == '__main__':
     methods = ['cnn', 'hpf', 'tenengrad1']
@@ -1042,5 +1067,5 @@ if __name__ == '__main__':
             all_errors.append(errors)
 
         for idx, max_acqu in enumerate(range_of_acquisitions):
-            print('For {} acquisitions, the error is {} +- {}'.format(max_acqu, np.mean(all_errors[idx]), np.std(all_errors[idx])))
+            log.info('For {} acquisitions, the error is {} +- {}'.format(max_acqu, np.mean(all_errors[idx]), np.std(all_errors[idx])))
         pickle_save('errors_simulations_{}.pkl'.format(method), all_errors)

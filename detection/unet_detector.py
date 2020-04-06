@@ -42,6 +42,11 @@ from fastai.callbacks import TrainingPhase, GeneralScheduler
 from fastai.callback import annealing_cos
 from fastai.vision import Image, ImageList, get_transforms, rand_crop, ImageImageList
 from fastai.basic_data import DataBunch, DatasetType, TensorDataset, DataLoader
+import logging
+
+log = logging.getLogger('')
+torch.backends.cudnn.enabled = True
+
 
 @dataclass
 class TensorboardLogger(Callback):
@@ -144,9 +149,9 @@ def test_unet(learn, picture_input, downsample=8, batch_size=12, picture=False):
 
 
 def get_learner():
-
+    log.info('Loading CNN model...')
     device = torch.device('cuda')
-    learn = load_learner(path='', file='data/05-03-2020-17:37:43_PROJ_9011_LR_0.0001_BS_30_N_unet_resnet_ATT_False_MODEL_resnet34unetanneal_EXPORT_37.pth', device=device)
+    learn = load_learner(path='', file='data/05-03-2020-17_37_43_PROJ_9011_LR_0.0001_BS_30_N_unet_resnet_ATT_False_MODEL_resnet34unetanneal_EXPORT_37.pth', device=device)
 
     return learn
 

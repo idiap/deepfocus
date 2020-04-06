@@ -43,8 +43,6 @@ from deepfocus_pb2 import BestFocusResponse
 from concurrent import futures
 import time
 import pickle
-from unet_detector import *
-import calibration_fit as calib_fit
 from skimage.measure import label
 from skimage.measure import regionprops
 from skimage.transform import resize
@@ -53,8 +51,6 @@ from sklearn.cluster import MeanShift
 import matplotlib.pyplot as plt
 from toolbox import scale3d, multipage
 
-
-torch.backends.cudnn.enabled = True
 logging.basicConfig(
     format="%(asctime)s [SERVER] %(message)s".format(00),
     handlers=[
@@ -64,6 +60,9 @@ logging.basicConfig(
 
 log = logging.getLogger('')
 log.setLevel(logging.INFO)
+
+from unet_detector import *
+import calibration_fit as calib_fit
 
 
 def get_focus_mean(focus_map, width, height, roi, mode = 'min'):
@@ -93,27 +92,27 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
     def LoadCalibration(self, request, context):
         self.calibration_curve = calib_fit.Calibration()
         self.calibration_curve.load(pickle.load(open(request.calibration_curve_pickle_path, 'rb')))
-        print("Calibration successfully loaded!")
+        log.info("Calibration successfully loaded!")
         return deepfocus_pb2.CurveResponse(pickle_found=True)
 
     def StartAutofocus(self, request, context):
-        print('StartAutofocus command received.')
+        log.info('StartAutofocus command received.')
         ### ReponseType => 0-> no calibration file, 1-> need one more image, 2-> autofocus okay
 
         ### PARAMS ###
         z_size = 3000
-        downsample = 40
+        downsample = 32
         range_param = 1
-        criterion = 4 * 10 * request.threshold
-        correlation_threshold = request.threshold / 50.0
-        std_threshold = request.threshold * 50.0
-        minimum_images = request.min_iter
+        criterion = 4 * 10 * request.threshold # UNUSED
+        correlation_threshold = request.threshold / 50.0 # UNUSED
+        std_threshold = request.threshold * 50.0 # UNUSED
+        minimum_images = request.min_iter # UNUSED
         max_images = request.max_iter
         self.optimizer_name = request.optimizer
         roi_3d = False
 
         if self.calibration_curve is None:
-            print('The calibration curve is not loaded!')
+            log.error('The calibration curve is not loaded!')
             return deepfocus_pb2.BestFocusResponse(message=0)
 
         ## INPUT CONVERSION
@@ -141,8 +140,8 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                                                     height=request.height, z_positions=input_z_positions, downsample=downsample)
 
             self.image_stack = input_image_stack_class
-            print('I create the stack.')
-            print('Optimization: {}'.format(self.optimizer_name))
+            log.info('I create the stack.')
+            log.info('Optimization: {}'.format(self.optimizer_name))
         else:
             for i in range(input_image_stack.shape[0]):
                 self.image_stack.add_image_to_stack(input_image_stack, input_z_positions)
@@ -151,10 +150,10 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
         absolute_z_limit_max = self.image_stack.z_positions[0] + request.max_limit
 
         roi = np.asarray(request.roi_coords)  # 4 dimensional array. p0(x,y) p1(x,y)
-        print('ROI found : {}'.format(roi))
+        log.info('ROI found : {}'.format(roi))
 
         if roi[0] == -1 or roi[0] == -2:
-            print('ROI -> 2D automatic ROI')
+            log.info('ROI -> 2D automatic ROI')
             if roi[0] == -2:
                 roi_3d = True
             focus_map_resized = [resize(self.image_stack.focus_map[i, :, :, 0], (request.width, request.height),
@@ -174,9 +173,9 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
             roi[1] = b
             roi[2] = c
             roi[3] = d
-            print('Found new 2D ROI: {}'.format(region.bbox))
+            log.info('Found new 2D ROI: {}'.format(region.bbox))
         elif roi[0] == roi[1] == roi[2] == roi[3]:
-            print('No ROI')
+            log.info('No ROI')
             roi[0] = 0
             roi[1] = 0
             roi[2] = request.width
@@ -184,7 +183,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
         elif roi[0] == -3:  # only 3d roi
             roi_3d = True
 
-        print('Correlate...')
+        log.info('Correlate...')
         research_boundaries = [absolute_z_limit_min,
                                absolute_z_limit_max]  # RESEARCH BOUNDARIES (THE POINTS WILL BE GUESSED THERE
 
@@ -247,7 +246,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                 minimums = np.min(correlated, axis=0)
                 minimum_arg = np.argmin(correlated, axis=0)
                 final_best_values = ypp[minimum_arg]
-                print("Final best values = {}".format(final_best_values))
+                log.info("Final best values = {}".format(final_best_values))
 
                 ## crop the results to the region of interest (a rectangle)
                 minimums = resize(minimums, (request.width, request.height), order=0)
@@ -262,10 +261,10 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                 if not np.isscalar(final_best_values):
                     final_best_values = final_best_values[
                         (final_best_values > absolute_z_limit_min) & (final_best_values < absolute_z_limit_max)]
-                    print('Best values {}'.format(final_best_values))
+                    log.info('Best values {}'.format(final_best_values))
                     clustering = MeanShift(bandwidth=self.calibration_curve.get_width())
                     clustering.fit(final_best_values.reshape(-1, 1))
-                    print('Centers available : {}'.format(clustering.cluster_centers_))
+                    log.info('Centers available : {}'.format(clustering.cluster_centers_))
                     new_point = clustering.cluster_centers_[np.argmax(np.bincount(clustering.labels_))]
                 else:
                     new_point = final_best_values
@@ -276,36 +275,36 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                 message = 2
 
             if self.image_stack.get_num_z() > max_images:
-                print("Comparing focus values")
+                log.info("Comparing focus values")
                 best_focus = get_focus_mean(self.image_stack.get_focus_map()[-1], request.width, request.height, roi)
                 best_focus_idx = 0
-                print("Index: ", best_focus_idx)
-                print("Focus for current image: {}".format(best_focus))
+                log.info("Index: ", best_focus_idx)
+                log.info("Focus for current image: {}".format(best_focus))
                 for i, focus_map in enumerate(self.image_stack.get_focus_map()[1::]):
                     temp = get_focus_mean(focus_map, request.width, request.height, roi)
-                    print("Index: ", i + 1)
-                    print("Focus: {}".format(temp))
+                    log.info("Index: ", i + 1)
+                    log.info("Focus: {}".format(temp))
                     if temp < best_focus:
                         best_focus = temp
                         best_focus_idx = i + 1
-                        print("Current Best")
-                        print("Index: ", best_focus_idx)
-                        print("Focus: {}".format(best_focus))
+                        log.info("Current Best")
+                        log.info("Index: ", best_focus_idx)
+                        log.info("Focus: {}".format(best_focus))
 
                 new_point = self.image_stack.get_z_positions()[best_focus_idx]
                 message = 3
 
-        print("New point: {}, message {}".format(new_point, message))
+        log.info("New point: {}, message {}".format(new_point, message))
 
 
         if message == 1:
-            print("I go to {} to get a new image".format(new_point))
+            log.info("I go to {} to get a new image".format(new_point))
             return deepfocus_pb2.BestFocusResponse(message=message, z_shift=new_point)
         elif message == 2:
-            print("I go to {} to get a new image".format(new_point))
+            log.info("I go to {} to get a new image".format(new_point))
             return deepfocus_pb2.BestFocusResponse(message=message, z_shift=new_point)
         elif message == 3:
-            print("I have enough points. Number of images = {}, maximum allowed images = {}".format(self.image_stack.get_num_z(), max_images))
+            log.info("I have enough points. Number of images = {}, maximum allowed images = {}".format(self.image_stack.get_num_z(), max_images))
             calib_fit.plot_correlation(ypp, correlated, np.argmin(correlated, axis=0), minimums)
             calib_fit.plot_final_best_values(final_best_values_with_roi)
             calib_fit.plot_focus_acquisition(self.calibration_curve, self.image_stack.get_z_positions(),
@@ -348,19 +347,18 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
             if roi_3d:
                 min_z = new_point - self.calibration_curve.get_width() * request.roi_3d_num_sigma
                 max_z = new_point + self.calibration_curve.get_width() * request.roi_3d_num_sigma
-                print("ROI 3D... stack in the neighborhood of the best focus {} -> {} to {}".format(new_point, min_z,
+                log.info("ROI 3D... stack in the neighborhood of the best focus {} -> {} to {}".format(new_point, min_z,
                                                                                                     max_z))
                 return deepfocus_pb2.BestFocusResponse(message=message, z_shift=new_point, roi_min_z=min_z, roi_max_z=max_z)
 
-            print("Best focus found : {}".format(new_point))
+            log.info("Best focus found : {}".format(new_point))
             return deepfocus_pb2.BestFocusResponse(message=message, z_shift=new_point)
         else:
-            print('Error, message unknown')
+            log.error('Error, message unknown')
             exit()
 
-
     def CreateCalibrationCurve(self, request, context):
-        print("Receiving incoming message. The number of byte per pixel is = {}".format(request.bytes_per_pixel))
+        log.info("Receiving incoming message. The number of byte per pixel is = {}".format(request.bytes_per_pixel))
         ## INPUT CONVERSION
         if request.bytes_per_pixel == 2:
             dt = np.dtype(np.int16)
@@ -371,7 +369,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
             dt = dt.newbyteorder('<')
             input_stack_array = np.frombuffer(request.image_list, dtype=dt).astype(np.float64) / 128.0
 
-        downsample = 40
+        downsample = 32
 
         z_positions = np.asarray(request.z_positions)
         image_stack = np.reshape(input_stack_array, (z_positions.shape[0], request.width, request.height))
@@ -381,14 +379,14 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
         image_stack_class = calib_fit.ImageStack()
 
         image_stack_class.set_image_stack(image_stack=image_stack, width=request.width, height=request.height,
-                                          steps=request.steps, z_positions=z_positions, downsample=downsample)
+                                          z_positions=z_positions, downsample=downsample)
 
         ## CALIBRATION
         self.calibration_curve = calib_fit.create_calibration_curve_stack(image_stack_class)
 
         ## SAVE TO FILE
         calibration_curve_path = "{}/calibration_curve.pickle".format(request.calib_curve_pathway)
-        print('Saving the curve to {} ...'.format(calibration_curve_path))
+        log.info('Saving the curve to {} ...'.format(calibration_curve_path))
 
         with open(calibration_curve_path, 'wb') as file:
             pickle.dump(self.calibration_curve.save(), file)
@@ -419,7 +417,6 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
 
 def serve():
     gigabyte = 1024 ** 3
-
     executor = futures.ThreadPoolExecutor()
     server = grpc.server(executor, options=[
         ('grpc.max_send_message_length', gigabyte),
