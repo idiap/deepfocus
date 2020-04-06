@@ -101,7 +101,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
 
         ### PARAMS ###
         z_size = 3000
-        downsample = 32
+        downsample = 16
         range_param = 1
         criterion = 4 * 10 * request.threshold # UNUSED
         correlation_threshold = request.threshold / 50.0 # UNUSED
@@ -128,15 +128,14 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
         input_z_positions = np.asarray(request.z_position)
         input_image_stack = np.reshape(np.asarray(input_stack_array), (1, request.width, request.height))
         input_image_stack = np.asarray([gaussian_filter(input_image_stack[i], 1) for i in range(input_image_stack.shape[0])])
-
+        log.info('Received image size : {}'.format(input_image_stack.shape))
         # imsave2('autof_{}.png'.format(self.i), input_image_stack[0])
         self.i += 1
         # Adds the image to image_stack. The image_stack calls the CNN to get the focus map and save it.
         if self.image_stack is None:
-            input_image_stack_class = calib_fit.ImageStack(downsample = downsample)
-
+            input_image_stack_class = calib_fit.ImageStack()
+            input_image_stack_class.downsample = downsample
             input_image_stack_class.set_image_stack(image_stack=input_image_stack, width=request.width,
-                                                    steps=request.steps,
                                                     height=request.height, z_positions=input_z_positions, downsample=downsample)
 
             self.image_stack = input_image_stack_class
@@ -183,12 +182,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
         elif roi[0] == -3:  # only 3d roi
             roi_3d = True
 
-        log.info('Correlate...')
-        research_boundaries = [absolute_z_limit_min,
-                               absolute_z_limit_max]  # RESEARCH BOUNDARIES (THE POINTS WILL BE GUESSED THERE
 
-        correlated, ypp = calib_fit.fit_to_calibration_correlation(research_boundaries[0], research_boundaries[1], self.image_stack.get_focus_map(), self.image_stack.get_z_positions(),
-                                        self.calibration_curve, z_size_correlation=z_size)
 
         ######################### GET THE MOST CORRELATED POINT AND SET THE SHIFT ##############################
 
@@ -243,6 +237,15 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                 self.gss['point'] = 'fd'
 
             if self.image_stack.get_num_z() == max_images:
+                log.info('Correlate...')
+                research_boundaries = [absolute_z_limit_min,
+                                       absolute_z_limit_max]  # RESEARCH BOUNDARIES (THE POINTS WILL BE GUESSED THERE
+                correlated, ypp = calib_fit.fit_to_calibration_correlation(research_boundaries[0],
+                                                                           research_boundaries[1],
+                                                                           self.image_stack.get_focus_map(),
+                                                                           self.image_stack.get_z_positions(),
+                                                                           self.calibration_curve,
+                                                                           z_size_correlation=z_size)
                 minimums = np.min(correlated, axis=0)
                 minimum_arg = np.argmin(correlated, axis=0)
                 final_best_values = ypp[minimum_arg]
@@ -257,38 +260,42 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
                 minimums = minimums[roi[0]:roi[2], roi[1]:roi[3]].flatten()
                 minimum_arg = minimum_arg[roi[0]:roi[2], roi[1]:roi[3]].flatten()
                 final_best_values_with_roi = final_best_values[roi[0]:roi[2], roi[1]:roi[3]].flatten()
+                final_best_values = np.unique(final_best_values_with_roi)
 
                 if not np.isscalar(final_best_values):
+                    log.info('Multiples values to chose from: filtering and clustering...')
                     final_best_values = final_best_values[
                         (final_best_values > absolute_z_limit_min) & (final_best_values < absolute_z_limit_max)]
-                    log.info('Best values {}'.format(final_best_values))
+                    log.info('Best values after filtering {}'.format(final_best_values))
                     clustering = MeanShift(bandwidth=self.calibration_curve.get_width())
+                    log.info("Doing meanshift algorithm...")
                     clustering.fit(final_best_values.reshape(-1, 1))
                     log.info('Centers available : {}'.format(clustering.cluster_centers_))
                     new_point = clustering.cluster_centers_[np.argmax(np.bincount(clustering.labels_))]
                 else:
+                    log.info('Only one value to chose from...')
                     new_point = final_best_values
 
 
                 #new_point = final_best_values_with_roi[np.argmin(minimums, axis=0)]
-
+                new_point = float(new_point)
                 message = 2
 
             if self.image_stack.get_num_z() > max_images:
                 log.info("Comparing focus values")
                 best_focus = get_focus_mean(self.image_stack.get_focus_map()[-1], request.width, request.height, roi)
                 best_focus_idx = 0
-                log.info("Index: ", best_focus_idx)
+                log.info("Index: {}".format(best_focus_idx))
                 log.info("Focus for current image: {}".format(best_focus))
                 for i, focus_map in enumerate(self.image_stack.get_focus_map()[1::]):
                     temp = get_focus_mean(focus_map, request.width, request.height, roi)
-                    log.info("Index: ", i + 1)
+                    log.info("Index: {}".format(i + 1))
                     log.info("Focus: {}".format(temp))
                     if temp < best_focus:
                         best_focus = temp
                         best_focus_idx = i + 1
                         log.info("Current Best")
-                        log.info("Index: ", best_focus_idx)
+                        log.info("Index: {}".format(best_focus_idx))
                         log.info("Focus: {}".format(best_focus))
 
                 new_point = self.image_stack.get_z_positions()[best_focus_idx]
@@ -305,38 +312,38 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
             return deepfocus_pb2.BestFocusResponse(message=message, z_shift=new_point)
         elif message == 3:
             log.info("I have enough points. Number of images = {}, maximum allowed images = {}".format(self.image_stack.get_num_z(), max_images))
-            calib_fit.plot_correlation(ypp, correlated, np.argmin(correlated, axis=0), minimums)
-            calib_fit.plot_final_best_values(final_best_values_with_roi)
-            calib_fit.plot_focus_acquisition(self.calibration_curve, self.image_stack.get_z_positions(),
-                                   self.image_stack.get_focus_map(), final_best_values_with_roi.mean(), final_best_values_with_roi.min())
-            fig = plt.figure()
-            a = plt.imshow(final_best_values)
-            fig.colorbar(a)
-            multipage('output.pdf')
-
-            focus_values_min = []
-            focus_values_mean = []
-            focus_values_median = []
-
-            for i in range(self.image_stack.get_num_z()):
-                focus_values_min.append(
-                    get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='min'))
-                focus_values_mean.append(
-                    get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='mean'))
-                focus_values_median.append(
-                    get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='median'))
-            plt.figure()
-            plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_mean), '.')
-            plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_min), '.')
-            plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_median), '.')
-
-            yp = np.linspace(self.image_stack.get_min_z(), self.image_stack.get_max_z(), 1000)
-            plt.plot(yp, self.calibration_curve.eval(yp - new_point))
-            plt.title('{} Optimization Result'.format(self.optimizer_name))
-            plt.xlabel('z positions')
-            plt.ylabel('focus values')
-            plt.legend(['focus values (mean)', 'focus values (minimum)', 'focus values (median)','best calibration curve shift'])
-            plt.savefig('{}_optimization_result.png'.format(self.optimizer_name))
+            # calib_fit.plot_correlation(ypp, correlated, np.argmin(correlated, axis=0), minimums)
+            # calib_fit.plot_final_best_values(final_best_values_with_roi)
+            # calib_fit.plot_focus_acquisition(self.calibration_curve, self.image_stack.get_z_positions(),
+            #                        self.image_stack.get_focus_map(), final_best_values_with_roi.mean(), final_best_values_with_roi.min())
+            # fig = plt.figure()
+            # a = plt.imshow(final_best_values)
+            # fig.colorbar(a)
+            # multipage('output.pdf')
+            #
+            # focus_values_min = []
+            # focus_values_mean = []
+            # focus_values_median = []
+            #
+            # for i in range(self.image_stack.get_num_z()):
+            #     focus_values_min.append(
+            #         get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='min'))
+            #     focus_values_mean.append(
+            #         get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='mean'))
+            #     focus_values_median.append(
+            #         get_focus_mean(self.image_stack.get_focus_map()[i], request.width, request.height, roi, mode='median'))
+            # plt.figure()
+            # plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_mean), '.')
+            # plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_min), '.')
+            # plt.plot(np.asarray(self.image_stack.get_z_positions()), np.asarray(focus_values_median), '.')
+            #
+            # yp = np.linspace(self.image_stack.get_min_z(), self.image_stack.get_max_z(), 1000)
+            # plt.plot(yp, self.calibration_curve.eval(yp - new_point))
+            # plt.title('{} Optimization Result'.format(self.optimizer_name))
+            # plt.xlabel('z positions')
+            # plt.ylabel('focus values')
+            # plt.legend(['focus values (mean)', 'focus values (minimum)', 'focus values (median)','best calibration curve shift'])
+            # plt.savefig('{}_optimization_result.png'.format(self.optimizer_name))
 
             # We delete the image stack and send the best focus value to Java
             del self.image_stack
@@ -369,7 +376,7 @@ class DeepFocusServicer(deepfocus_pb2_grpc.DeepFocusServicer):
             dt = dt.newbyteorder('<')
             input_stack_array = np.frombuffer(request.image_list, dtype=dt).astype(np.float64) / 128.0
 
-        downsample = 32
+        downsample = 16
 
         z_positions = np.asarray(request.z_positions)
         image_stack = np.reshape(input_stack_array, (z_positions.shape[0], request.width, request.height))
