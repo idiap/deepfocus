@@ -10,7 +10,7 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <Micro-ManagerInstallDirectory>C:\Program Files\Micro-Manager-2.0gamma_autofocus</Micro-ManagerInstallDirectory>
-        <grpc.version>1.16.1</grpc.version><!-- CURRENT_GRPC_VERSION -->
+        <grpc.version>1.53.0</grpc.version><!-- CURRENT_GRPC_VERSION -->
         <protobuf.version>3.6.1</protobuf.version>
         <protoc.version>3.6.1</protoc.version>
         <netty.tcnative.version>2.0.7.Final</netty.tcnative.version>
